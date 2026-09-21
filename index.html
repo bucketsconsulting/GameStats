@@ -391,6 +391,11 @@ details li{margin-bottom:3px}
   <div id="fichaCuerpo"></div>
 </div>
 
+<div id="vistaEquipo" hidden>
+  <button class="volver" id="btnVolverEquipo">← Volver a temporada</button>
+  <div id="equipoCuerpo"></div>
+</div>
+
 <div class="escucha" id="escucha"></div>
 
 <div class="voz">
@@ -736,6 +741,7 @@ function irA(v, jug){
   document.getElementById("vistaTemporada").hidden = (v!=="temporada");
   document.getElementById("vistaVivo").hidden = (v!=="vivo");
   document.getElementById("vistaFicha").hidden = (v!=="ficha");
+  document.getElementById("vistaEquipo").hidden = (v!=="equipo");
   document.getElementById("vistaEditar").hidden = (v!=="editar");
   document.getElementById("vistaRol").hidden = (v!=="rol");
   document.querySelector(".pestanas").hidden = (v==="rol");
@@ -773,6 +779,32 @@ function agregado(jug, liga){
     partidos.push({p, s, min:minutosDe(jug,p)/60, r});
   });
   return { t, pj, seg, g, pd, partidos };
+}
+function statsEquipo(p){
+  const t = vacio();
+  plantilla(p.equipo||"").forEach(j=>{
+    const s = p.stats && p.stats[j.id];
+    if (s) CLAVES.forEach(k=> t[k] += (s[k]||0));
+  });
+  return t;
+}
+function equipoJugo(p){
+  const s = statsEquipo(p);
+  return CLAVES.some(k=>s[k]>0) || (p.pf!=null && p.pf!=="") || (p.pc!=null && p.pc!=="");
+}
+function agregadoEquipo(liga, equipo){
+  const t = vacio();
+  let pj=0, g=0, pd=0, partidos=[];
+  partidosDe(liga, equipo).forEach(p=>{
+    if(!equipoJugo(p)) return;
+    pj++;
+    const s = statsEquipo(p);
+    CLAVES.forEach(k=> t[k] += s[k]);
+    const r = resultado(p);
+    if (r){ r.gano ? g++ : (r.empate ? 0 : pd++); }
+    partidos.push({p, s, r});
+  });
+  return { t, pj, g, pd, partidos };
 }
 function media(v, n){ return n ? (Math.round((v/n)*10)/10) : 0; }
 function pct(c, i){ const tot=c+i; return tot ? Math.round(c*100/tot)+"%" : "—"; }
@@ -821,6 +853,23 @@ function pintarTemporada(){
   zona.innerHTML = "";
   if (!plantilla(filtroEquipo).length){
     zona.innerHTML = '<div class="vacio">Añade a tus jugadores para empezar a acumular la temporada. A cada uno le asignas su equipo.</div>';
+  }
+  const equipoActivo = filtroEquipo || (eqs.length===1 ? eqs[0] : "");
+  if (equipoActivo && plantilla(equipoActivo).length){
+    const ae = agregadoEquipo(filtroLiga, equipoActivo);
+    const bE = document.createElement("button");
+    bE.className = "jug-tarjeta";
+    bE.style.borderColor = "var(--balon)";
+    bE.innerHTML =
+      '<span class="ini" style="color:var(--balon)">🏀</span>'+
+      '<span class="cuerpo"><b>'+esc(equipoActivo)+' <span class="etiqueta-liga">equipo</span></b><span class="num">'+
+        (ae.pj ? ae.pj+" partidos · "+media(puntos(ae.t),ae.pj)+" pts · "+pct(ae.t.t2c+ae.t.t3c, ae.t.t2f+ae.t.t3f)+" tiro de campo"
+               : "sin partidos todavía")+
+        (ae.pj ? '<br>'+ae.g+"G-"+ae.pd+"P" : "")+
+      '</span></span>'+
+      '<span class="pirbig"><b class="num">'+(ae.pj?media(pir(ae.t),ae.pj):"—")+'</b><span>PIR medio</span></span>';
+    bE.onclick = ()=>{ equipoDe = equipoActivo; irA("equipo"); };
+    zona.appendChild(bE);
   }
   plantilla(filtroEquipo).forEach(j=>{
     const a = agregado(j.id, filtroLiga);
@@ -910,10 +959,12 @@ function pintarFicha(){
     tarjeta(n, "partidos") + tarjeta(media(a.seg/60,n), "min") +
     tarjeta(media(puntos(t),n), "pts") + tarjeta(media(pir(t),n), "PIR", true) + '</div>';
 
+  const eqT = j.equipo ? agregadoEquipo(filtroLiga, j.equipo).t : null;
+  const linEq = (c,i) => eqT ? '<span style="display:block;font-size:10px;color:var(--tenue);margin-top:2px">equipo '+pct(eqT[c],eqT[i])+'</span>' : '';
   h += '<div class="tiros">'+
-    '<div class="tiro"><b class="num">'+pct(t.t2c,t.t2f)+'</b><span>tiros de 2</span></div>'+
-    '<div class="tiro"><b class="num">'+pct(t.t3c,t.t3f)+'</b><span>triples</span></div>'+
-    '<div class="tiro"><b class="num">'+pct(t.tlc,t.tlf)+'</b><span>libres</span></div></div>';
+    '<div class="tiro"><b class="num">'+pct(t.t2c,t.t2f)+'</b><span>tiros de 2</span>'+linEq("t2c","t2f")+'</div>'+
+    '<div class="tiro"><b class="num">'+pct(t.t3c,t.t3f)+'</b><span>triples</span>'+linEq("t3c","t3f")+'</div>'+
+    '<div class="tiro"><b class="num">'+pct(t.tlc,t.tlf)+'</b><span>libres</span>'+linEq("tlc","tlf")+'</div></div>';
 
   h += '<div class="tarjetas">'+
     tarjeta(media(t.ro+t.rd,n),"reb") + tarjeta(media(t.ast,n),"as") +
@@ -1089,6 +1140,100 @@ function refrescarCabeceraEd(s){
   if (h) h.textContent = "Estadísticas · "+puntos(s)+" pts, PIR "+pir(s);
 }
 
+let equipoDe = null;
+function pintarEquipo(){
+  const zona = document.getElementById("equipoCuerpo");
+  if(!equipoDe){ zona.innerHTML = '<div class="vacio">Equipo no encontrado.</div>'; return; }
+  const a = agregadoEquipo(filtroLiga, equipoDe);
+  const t = a.t, n = a.pj;
+
+  let h = '<div class="cabecera"><h1>'+esc(equipoDe)+'</h1></div>';
+  h += '<div class="filtros" id="filtrosEquipoFicha"></div>';
+  h += '<div class="tarjetas">'+
+    tarjeta(n, "partidos") + tarjeta(n?(a.g+"G-"+a.pd+"P"):"—", "récord") +
+    tarjeta(media(puntos(t),n), "pts") + tarjeta(media(pir(t),n), "PIR", true) + '</div>';
+
+  h += '<div class="tiros">'+
+    '<div class="tiro"><b class="num">'+pct(t.t2c,t.t2f)+'</b><span>tiros de 2</span></div>'+
+    '<div class="tiro"><b class="num">'+pct(t.t3c,t.t3f)+'</b><span>triples</span></div>'+
+    '<div class="tiro"><b class="num">'+pct(t.tlc,t.tlf)+'</b><span>libres</span></div></div>';
+
+  h += '<div class="tarjetas">'+
+    tarjeta(media(t.ro+t.rd,n),"reb") + tarjeta(media(t.ast,n),"as") +
+    tarjeta(media(t.rob,n),"rob") + tarjeta(media(t.per,n),"per") + '</div>';
+
+  if (a.partidos.length) h += '<div class="barras">'+spark(a.partidos.map(x=>pir(x.s)))+'</div>';
+
+  h += '<h2 class="rot">Partido a partido</h2>';
+  if(!a.partidos.length){
+    h += '<div class="vacio">Todavía no hay partidos jugados con este equipo.</div>';
+  } else {
+    h += '<table><thead><tr><th>Rival</th><th>Res</th><th>Pts</th><th>Reb</th><th>As</th><th>PIR</th></tr></thead><tbody>';
+    a.partidos.forEach(x=>{
+      const r = x.r;
+      h += '<tr class="abre"><td>'+esc(x.p.rival||"—")+'<span style="color:var(--tenue);font-size:11px"><br>'+
+        new Date(x.p.fecha).toLocaleDateString("es-ES",{day:"numeric",month:"short"})+'</span></td>'+
+        '<td class="num '+(r? (r.gano?"gano":(r.empate?"":"perdio")) :"")+'">'+(r? (r.gano?"G ":(r.empate?"E ":"P "))+r.pf+"-"+r.pc : "—")+'</td>'+
+        '<td class="num">'+puntos(x.s)+'</td>'+
+        '<td class="num">'+(x.s.ro+x.s.rd)+'</td>'+
+        '<td class="num">'+x.s.ast+'</td>'+
+        '<td class="num destaca">'+pir(x.s)+'</td></tr>';
+      h += '<tr class="detalle" hidden><td colspan="6">'+detalleEquipo(x)+'</td></tr>';
+    });
+    h += '<tr class="media"><td>Media</td><td class="num">'+a.g+"G-"+a.pd+'P</td>'+
+      '<td class="num">'+media(puntos(t),n)+'</td>'+
+      '<td class="num">'+media(t.ro+t.rd,n)+'</td><td class="num">'+media(t.ast,n)+'</td>'+
+      '<td class="num">'+media(pir(t),n)+'</td></tr>';
+    h += '</tbody></table>';
+  }
+  zona.innerHTML = h;
+
+  zona.querySelectorAll("tr.abre").forEach(tr=>{ tr.onclick = ()=>{
+      const d = tr.nextElementSibling;
+      if (d && d.classList.contains("detalle")){ d.hidden = !d.hidden; tr.classList.toggle("abierta", !d.hidden); }
+    };
+  });
+  zona.querySelectorAll("[data-abrir]").forEach(b=>{
+    b.onclick = e=>{ e.stopPropagation(); D.actual = b.dataset.abrir; guardar(); irA("vivo"); };
+  });
+
+  const fc = document.getElementById("filtrosEquipoFicha");
+  const ls = ligas();
+  if (ls.length > 1){
+    const todas = document.createElement("button");
+    todas.textContent = "Todas"; todas.className = filtroLiga ? "" : "activa";
+    todas.onclick = ()=>{ filtroLiga=""; pintar(); };
+    fc.appendChild(todas);
+    ls.forEach(l=>{
+      const b = document.createElement("button");
+      b.textContent = l; b.className = (filtroLiga===l)?"activa":"";
+      b.onclick = ()=>{ filtroLiga = (filtroLiga===l?"":l); pintar(); };
+      fc.appendChild(b);
+    });
+  }
+}
+function detalleEquipo(x){
+  const s = x.s;
+  const c = (v, et) => '<div><b class="num">'+v+'</b><span>'+et+'</span></div>';
+  return '<div class="dgrid">'+
+    c(pct(s.t2c,s.t2f), "tiros de 2") +
+    c(pct(s.t3c,s.t3f), "triples") +
+    c(pct(s.tlc,s.tlf), "libres") +
+    c(puntos(s), "puntos") +
+    c(s.ro, "reb. ofensivo") +
+    c(s.rd, "reb. defensivo") +
+    c(s.ast, "asistencias") +
+    c(s.rob, "robos") +
+    c(s.per, "pérdidas") +
+    c(s.tap, "tapones") +
+    c(s.fc, "faltas cometidas") +
+    c(pir(s), "PIR") +
+  '</div>'+
+  '<div class="acciones-det">'+
+    '<button class="mini-btn" data-abrir="'+x.p.id+'">Abrir en registro en vivo</button>'+
+  '</div>';
+}
+
 function tarjeta(v, et, destaca){
   return '<div class="tarjeta'+(destaca?" pir":"")+'"><b class="num">'+v+'</b><span>'+et+'</span></div>';
 }
@@ -1115,6 +1260,7 @@ function pintar(){
   if (vista==="rol") return;
   if (vista==="temporada"){ pintarTemporada(); return; }
   if (vista==="ficha"){ pintarFicha(); return; }
+  if (vista==="equipo"){ pintarEquipo(); return; }
   if (vista==="editar"){ pintarEditar(); return; }
   const p = partidoActual();
   if(!p) return;
@@ -1278,6 +1424,23 @@ function pintarTabla(p){
       '<td class="num">'+s.fr+"</td>"+
       '<td class="num destaca">'+pir(s)+"</td></tr>";
   });
+  if (plantilla(p.equipo||"").length){
+    const se = statsEquipo(p);
+    h += '<tr class="media"><td>Equipo</td>'+
+      '<td class="num">—</td>'+
+      '<td class="num">'+puntos(se)+"</td>"+
+      '<td class="num">'+se.t2c+"/"+(se.t2c+se.t2f)+"</td>"+
+      '<td class="num">'+se.t3c+"/"+(se.t3c+se.t3f)+"</td>"+
+      '<td class="num">'+se.tlc+"/"+(se.tlc+se.tlf)+"</td>"+
+      '<td class="num">'+(se.ro+se.rd)+"</td>"+
+      '<td class="num">'+se.ast+"</td>"+
+      '<td class="num">—</td>'+
+      '<td class="num">'+se.rob+"</td>"+
+      '<td class="num">'+se.per+"</td>"+
+      '<td class="num">'+se.fc+"</td>"+
+      '<td class="num">'+se.fr+"</td>"+
+      '<td class="num destaca">'+pir(se)+"</td></tr>";
+  }
   h += "</tbody></table>";
   document.getElementById("tabla").innerHTML = plantilla(p.equipo||"").length ? h : '<div class="vacio">Sin jugadores en este equipo.</div>';
 }
@@ -1311,10 +1474,11 @@ document.querySelectorAll("[data-riv]").forEach(b=>{
 document.getElementById("mic").onclick = alternarVoz;
 document.getElementById("rival").oninput = e=>{ const p=partidoActual(); p.rival = e.target.value; sucio(rp(p,"info")); guardar(); };
 document.getElementById("liga").oninput = e=>{ const p=partidoActual(); p.liga = e.target.value; sucio(rp(p,"info")); guardar(); };
-document.getElementById("tabTemp").onclick = ()=>irA(vista==="ficha"?"ficha":"temporada");
+document.getElementById("tabTemp").onclick = ()=>irA((vista==="ficha"||vista==="equipo")?vista:"temporada");
 document.getElementById("nubeEstado").ondblclick = ()=>pedirRol();
 document.getElementById("tabVivo").onclick = ()=>irA("vivo");
 document.getElementById("btnVolver").onclick = ()=>irA("temporada");
+document.getElementById("btnVolverEquipo").onclick = ()=>irA("temporada");
 document.getElementById("btnVolverEd").onclick = ()=>irA("ficha");
 document.getElementById("btnAbrir").onclick = ()=>{
   const p = partidoActual();
