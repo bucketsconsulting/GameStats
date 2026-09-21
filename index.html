@@ -867,7 +867,7 @@ function pintarTemporada(){
                : "sin partidos todavía")+
         (ae.pj ? '<br>'+ae.g+"G-"+ae.pd+"P" : "")+
       '</span></span>'+
-      '<span class="pirbig"><b class="num">'+(ae.pj?media(pir(ae.t),ae.pj):"—")+'</b><span>PIR medio</span></span>';
+      '<span class="pirbig"><b class="num">'+(ae.pj?media(puntos(ae.t),ae.pj):"—")+'</b><span>pts medios</span></span>';
     bE.onclick = ()=>{ equipoDe = equipoActivo; irA("equipo"); };
     zona.appendChild(bE);
   }
@@ -1151,7 +1151,7 @@ function pintarEquipo(){
   h += '<div class="filtros" id="filtrosEquipoFicha"></div>';
   h += '<div class="tarjetas">'+
     tarjeta(n, "partidos") + tarjeta(n?(a.g+"G-"+a.pd+"P"):"—", "récord") +
-    tarjeta(media(puntos(t),n), "pts") + tarjeta(media(pir(t),n), "PIR", true) + '</div>';
+    tarjeta(media(puntos(t),n), "pts") + tarjeta(pct(t.t2c+t.t3c,t.t2f+t.t3f), "TC%", true) + '</div>';
 
   h += '<div class="tiros">'+
     '<div class="tiro"><b class="num">'+pct(t.t2c,t.t2f)+'</b><span>tiros de 2</span></div>'+
@@ -1162,28 +1162,26 @@ function pintarEquipo(){
     tarjeta(media(t.ro+t.rd,n),"reb") + tarjeta(media(t.ast,n),"as") +
     tarjeta(media(t.rob,n),"rob") + tarjeta(media(t.per,n),"per") + '</div>';
 
-  if (a.partidos.length) h += '<div class="barras">'+spark(a.partidos.map(x=>pir(x.s)))+'</div>';
+  if (a.partidos.length) h += '<div class="barras">'+spark(a.partidos.map(x=>puntos(x.s)), "Puntos por partido")+'</div>';
 
   h += '<h2 class="rot">Partido a partido</h2>';
   if(!a.partidos.length){
     h += '<div class="vacio">Todavía no hay partidos jugados con este equipo.</div>';
   } else {
-    h += '<table><thead><tr><th>Rival</th><th>Res</th><th>Pts</th><th>Reb</th><th>As</th><th>PIR</th></tr></thead><tbody>';
+    h += '<table><thead><tr><th>Rival</th><th>Res</th><th>Pts</th><th>Reb</th><th>As</th></tr></thead><tbody>';
     a.partidos.forEach(x=>{
       const r = x.r;
       h += '<tr class="abre"><td>'+esc(x.p.rival||"—")+'<span style="color:var(--tenue);font-size:11px"><br>'+
         new Date(x.p.fecha).toLocaleDateString("es-ES",{day:"numeric",month:"short"})+'</span></td>'+
         '<td class="num '+(r? (r.gano?"gano":(r.empate?"":"perdio")) :"")+'">'+(r? (r.gano?"G ":(r.empate?"E ":"P "))+r.pf+"-"+r.pc : "—")+'</td>'+
-        '<td class="num">'+puntos(x.s)+'</td>'+
+        '<td class="num destaca">'+puntos(x.s)+'</td>'+
         '<td class="num">'+(x.s.ro+x.s.rd)+'</td>'+
-        '<td class="num">'+x.s.ast+'</td>'+
-        '<td class="num destaca">'+pir(x.s)+'</td></tr>';
-      h += '<tr class="detalle" hidden><td colspan="6">'+detalleEquipo(x)+'</td></tr>';
+        '<td class="num">'+x.s.ast+'</td></tr>';
+      h += '<tr class="detalle" hidden><td colspan="5">'+detalleEquipo(x)+'</td></tr>';
     });
     h += '<tr class="media"><td>Media</td><td class="num">'+a.g+"G-"+a.pd+'P</td>'+
       '<td class="num">'+media(puntos(t),n)+'</td>'+
-      '<td class="num">'+media(t.ro+t.rd,n)+'</td><td class="num">'+media(t.ast,n)+'</td>'+
-      '<td class="num">'+media(pir(t),n)+'</td></tr>';
+      '<td class="num">'+media(t.ro+t.rd,n)+'</td><td class="num">'+media(t.ast,n)+'</td></tr>';
     h += '</tbody></table>';
   }
   zona.innerHTML = h;
@@ -1227,7 +1225,6 @@ function detalleEquipo(x){
     c(s.per, "pérdidas") +
     c(s.tap, "tapones") +
     c(s.fc, "faltas cometidas") +
-    c(pir(s), "PIR") +
   '</div>'+
   '<div class="acciones-det">'+
     '<button class="mini-btn" data-abrir="'+x.p.id+'">Abrir en registro en vivo</button>'+
@@ -1237,12 +1234,13 @@ function detalleEquipo(x){
 function tarjeta(v, et, destaca){
   return '<div class="tarjeta'+(destaca?" pir":"")+'"><b class="num">'+v+'</b><span>'+et+'</span></div>';
 }
-function spark(vals){
+function spark(vals, etiqueta){
   if(!vals.length) return "";
+  etiqueta = etiqueta || "PIR por partido";
   const w = 300, h = 100, max = Math.max(5, ...vals.map(Math.abs));
   const cero = h/2;
   const ancho = Math.min(28, w/vals.length - 4);
-  let s = '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-label="PIR por partido">';
+  let s = '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-label="'+esc(etiqueta)+'">';
   s += '<line x1="0" y1="'+cero+'" x2="'+w+'" y2="'+cero+'" stroke="#33475C" stroke-width="1"/>';
   vals.forEach((v,i)=>{
     const x = (i+0.5)*(w/vals.length) - ancho/2;
@@ -1251,7 +1249,7 @@ function spark(vals){
     s += '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+ancho.toFixed(1)+'" height="'+Math.max(2,alto).toFixed(1)+
          '" rx="2" fill="'+(v>=0?"#E39B36":"#E0614C")+'"/>';
   });
-  s += '</svg><div style="color:var(--tenue);font-size:12px;margin-top:6px">PIR por partido, del más reciente al más antiguo</div>';
+  s += '</svg><div style="color:var(--tenue);font-size:12px;margin-top:6px">'+esc(etiqueta)+', del más reciente al más antiguo</div>';
   return s;
 }
 
@@ -1439,7 +1437,7 @@ function pintarTabla(p){
       '<td class="num">'+se.per+"</td>"+
       '<td class="num">'+se.fc+"</td>"+
       '<td class="num">'+se.fr+"</td>"+
-      '<td class="num destaca">'+pir(se)+"</td></tr>";
+      '<td class="num">—</td></tr>';
   }
   h += "</tbody></table>";
   document.getElementById("tabla").innerHTML = plantilla(p.equipo||"").length ? h : '<div class="vacio">Sin jugadores en este equipo.</div>';
