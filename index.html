@@ -1033,7 +1033,9 @@ function pintarFicha(){
 
   const puedoEditar = puedeEditarJugador(j.id);
   let h = '<div class="cabecera"><h1>'+esc(j.dorsal?("#"+j.dorsal+" "):"")+esc(j.nombre)+'</h1>'+
-    '<div style="flex:1"></div>'+(sesion.esAdmin?'<button class="mini-btn" id="btnEditJug" style="flex:0 0 auto">Editar</button>':'')+'</div>'+
+    '<div style="flex:1"></div>'+
+    '<button class="mini-btn" id="btnCSVJug" style="flex:0 0 auto">Exportar CSV</button>'+
+    (sesion.esAdmin?'<button class="mini-btn" id="btnEditJug" style="flex:0 0 auto;margin-left:6px">Editar</button>':'')+'</div>'+
     (j.equipo ? '<div style="color:var(--tenue);font-size:13px;margin:-6px 4px 12px">'+esc(j.equipo)+'</div>' : '');
   h += '<div class="filtros" id="filtrosFicha"></div>';
   h += '<div class="tarjetas">'+
@@ -1079,6 +1081,8 @@ function pintarFicha(){
     h += '</tbody></table>';
   }
   zona.innerHTML = h;
+
+  document.getElementById("btnCSVJug").onclick = ()=>exportarCSVJugador(j, a);
 
   const be = document.getElementById("btnEditJug");
   if (be) be.onclick = ()=>{
@@ -1795,6 +1799,19 @@ function bajarCSV(cab, filas, nombre){
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["\ufeff"+csv], {type:"text/csv;charset=utf-8"}));
   a.download = nombre; a.click();
+}
+function exportarCSVJugador(j, a){
+  if (!a.partidos.length){ avisar("Este jugador todav\u00eda no tiene partidos para exportar."); return; }
+  const cab = ["Fecha","Equipo","Liga","Rival","Resultado","Nuestros","Suyos","+/-","Min","Pts","2C","2I","3C","3I","TLC","TLI","RO","RD","As","Rob","Per","Tap","TapR","FC","FR","PIR"];
+  const filas = a.partidos.slice().reverse().map(x=>{
+    const r = x.r, s = x.s, pm = valorPM(x.p, j.id);
+    return [new Date(x.p.fecha).toLocaleDateString("es-ES"), x.p.equipo||"", x.p.liga||"", x.p.rival||"",
+      r ? (r.gano?"G":(r.empate?"E":"P")) : "", r?r.pf:"", r?r.pc:"",
+      (pm==null?"":pm), Math.round(x.min), puntos(s),
+      s.t2c, s.t2c+s.t2f, s.t3c, s.t3c+s.t3f, s.tlc, s.tlc+s.tlf,
+      s.ro, s.rd, s.ast, s.rob, s.per, s.tap, s.tapr, s.fc, s.fr, pir(s)];
+  });
+  bajarCSV(cab, filas, (j.nombre||"jugador").replace(/\s+/g,"-")+".csv");
 }
 document.getElementById("btnCSVTodo").onclick = ()=>{
   const cab = ["Fecha","Equipo","Liga","Rival","Resultado","Nuestros","Suyos","Dorsal","Jugador","+/-","Min","Pts","2C","2I","3C","3I","TLC","TLI","RO","RD","As","Rob","Per","Tap","TapR","FC","FR","PIR"];
