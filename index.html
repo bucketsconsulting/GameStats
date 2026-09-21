@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#101820">
 <title>Planilla en vivo</title>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <style>
 :root{
   --fondo:#101820;
@@ -135,6 +137,7 @@ td.destaca{color:var(--balon);font-weight:700}
 
 /* ---------- pestañas ---------- */
 .pestanas{display:flex;gap:6px;margin:2px 0 10px}
+.pestanas[hidden]{display:none}
 .pestanas button{
   flex:1;background:var(--panel);border-radius:12px;padding:11px 8px;
   font-size:14px;font-weight:600;color:var(--tenue);border:1px solid transparent
@@ -248,17 +251,18 @@ details li{margin-bottom:3px}
   <button id="tabVivo">Partido en vivo</button>
 </div>
 
-<div id="vistaRol" hidden>
-  <h2 class="rot">Bienvenido</h2>
+<div id="vistaLogin" hidden>
+  <h2 class="rot">Iniciar sesión</h2>
+  <div id="loginAviso" class="aviso"></div>
   <div class="campos" style="grid-template-columns:1fr">
-    <label>Tu nombre<input class="mini num" id="rolNombre" style="width:100%;text-align:left" placeholder="Leandro"></label>
+    <label>Email<input class="mini num" id="loginEmail" type="email" style="width:100%;text-align:left" placeholder="tu@email.com" autocomplete="username"></label>
+    <label>Contraseña<input class="mini num" id="loginPass" type="password" style="width:100%;text-align:left" placeholder="••••••••" autocomplete="current-password"></label>
   </div>
-  <button class="cta" id="rolAdmin">Soy el administrador</button>
-  <button class="cta" id="rolColab" style="background:var(--panel2);color:var(--tinta)">Soy colaborador</button>
-  <div class="vacio">El administrador crea los partidos y lo corrige todo. El colaborador elige un jugador y registra solo sus estadísticas.</div>
+  <button class="cta" id="btnLogin">Entrar</button>
+  <div class="vacio">Si no tenés cuenta, pedile al administrador del club que te la cree.</div>
 </div>
 
-<div id="vistaTemporada">
+<div id="vistaTemporada" hidden>
   <div class="filtros" id="filtrosEquipo"></div>
   <div class="filtros" id="filtros"></div>
   <button class="cta" id="btnNuevo2">Registrar un partido nuevo</button>
@@ -266,9 +270,16 @@ details li{margin-bottom:3px}
   <div class="pie">
     <button id="btnAddJug">Añadir jugador</button>
     <button id="btnCSVTodo">Exportar histórico CSV</button>
+    <button id="btnUsuarios">Usuarios</button>
     <button id="btnReset">Borrar historial</button>
     <button id="nubeEstado">Nube: apagada</button>
+    <button id="btnLogout">Cerrar sesión</button>
   </div>
+</div>
+
+<div id="vistaUsuarios" hidden>
+  <button class="volver" id="btnVolverUsuarios">← Volver a temporada</button>
+  <div id="usuariosCuerpo"></div>
 </div>
 
 <div id="vistaEditar" hidden>
@@ -298,12 +309,6 @@ details li{margin-bottom:3px}
     </div>
   </div>
 </div>
-
-<div class="resultado" id="barraColab">
-  <span id="txtAbierto">Cerrado a colaboradores</span>
-  <button class="mini-btn" id="btnAbrir" style="margin-left:auto;flex:0 0 auto">Abrir</button>
-</div>
-<div id="listaReclamos"></div>
 
 <h2 class="rot">Jugadores</h2>
 <div class="tira" id="tiraJugadores"></div>
@@ -416,6 +421,35 @@ const NUBE = {
   sala: "leandro-4k9x2m"    // cámbialo por algo tuyo y difícil de adivinar
 };
 
+/* ===== CONFIGURACIÓN DE LOGIN =========================================
+   Datos de tu app web de Firebase (Configuración del proyecto → Tus apps).
+   No son secretos, van embebidos en cualquier app cliente igual que acá.
+   ADMIN_EMAILS: las cuentas que entran como administrador; el resto entra
+   como usuario externo hasta que el administrador les asigne un equipo.
+   ================================================================== */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCCEN7Dh8HEGUxxFItYy3YXV3Nh1DzwOxA",
+  authDomain: "game-stats-43d4c.firebaseapp.com",
+  databaseURL: "https://game-stats-43d4c-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "game-stats-43d4c",
+  storageBucket: "game-stats-43d4c.firebasestorage.app",
+  messagingSenderId: "299963324333",
+  appId: "1:299963324333:web:1474ef3d9fe55635dab324"
+};
+const ADMIN_EMAILS = ["leandro.pugliese@gmail.com"];
+
+firebase.initializeApp(FIREBASE_CONFIG);
+const fbAuth = firebase.auth();
+
+/* sesión: se rellena en onAuthStateChanged, antes de eso nadie ve datos */
+let sesion = { user:null, esAdmin:false, perfil:null, idToken:null };
+function esExterno(){ return !!sesion.user && !sesion.esAdmin; }
+function miPerfilOk(){ return sesion.perfil && sesion.perfil.equipo; }
+function puedeEditarJugador(jid){
+  if (sesion.esAdmin) return true;
+  return !!(sesion.perfil && sesion.perfil.jugador===jid && sesion.perfil.puedeEditar);
+}
+
 /* ===================== almacenamiento ===================== */
 const Store = {
   async get(k){
@@ -441,7 +475,7 @@ const ETIQUETA = {
   fc:"Falta cometida", fr:"Falta recibida"
 };
 
-let D = { jugadores:[], partidos:[], actual:null, sel:null };
+let D = { jugadores:[], partidos:[], usuarios:{}, actual:null, sel:null };
 
 function vacio(){ const o={}; CLAVES.forEach(k=>o[k]=0); return o; }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
@@ -474,6 +508,7 @@ function sanear(d){
     if (!p.fecha) p.fecha = new Date().toISOString();
     if (typeof p.equipo !== "string") p.equipo = "";
   });
+  d.usuarios = (d.usuarios && typeof d.usuarios==="object") ? d.usuarios : {};
   if (!d.partidos.some(p=>p.id===d.actual)) d.actual = d.partidos[0] ? d.partidos[0].id : null;
   if (!d.jugadores.some(j=>j.id===d.sel)) d.sel = d.jugadores[0] ? d.jugadores[0].id : null;
   return d;
@@ -553,7 +588,7 @@ function nombreDe(id, conDorsal){
 function registrar(jug, clave){
   const p = partidoActual();
   statsDe(jug)[clave]++;
-  const ev = { id:uid(), jug, clave, ts:Date.now(), por:yo().nombre||"" };
+  const ev = { id:uid(), jug, clave, ts:Date.now(), por:sesion.user?sesion.user.email:"" };
   p.log.unshift(ev);
   sucio(rp(p,"stats/"+jug), rp(p,"log/"+ev.id));
   vibrar(18);
@@ -562,7 +597,7 @@ function registrar(jug, clave){
 function anotaRival(n){
   const p = partidoActual();
   p.pc = (Number(p.pc)||0) + n;
-  const ev = { id:uid(), jug:null, clave:"riv"+n, ts:Date.now(), por:yo().nombre||"" };
+  const ev = { id:uid(), jug:null, clave:"riv"+n, ts:Date.now(), por:sesion.user?sesion.user.email:"" };
   p.log.unshift(ev);
   sucio(rp(p,"info"), rp(p,"log/"+ev.id));
   vibrar(18);
@@ -576,10 +611,10 @@ function deshacer(ev){
     p.pc = Math.max(0, (Number(p.pc)||0) - (VALE[e.clave]||0));
   }
   else if (CLAVES.includes(e.clave)) statsDe(e.jug)[e.clave] = Math.max(0, statsDe(e.jug)[e.clave]-1);
-  if (soyColab() && e.por !== yo().nombre){ avisar("Solo puedes borrar lo que has registrado tú."); return; }
+  if (esExterno() && e.por !== sesion.user.email){ avisar("Solo puedes borrar lo que has registrado tú."); return; }
   p.log = p.log.filter(x=>x.id!==e.id);
   borrarRuta(rp(p,"log/"+e.id));
-  if (e.jug) sucio(rp(p,"stats/"+e.jug), rp(p,"dentro/"+e.jug));
+  if (e.jug) sucio(rp(p,"stats/"+e.jug));
   else sucio(rp(p,"info"));
   vibrar([12,40,12]);
   pintar(); guardar();
@@ -736,6 +771,10 @@ function avisar(txt){
 let vista = "temporada", filtroLiga = "", filtroEquipo = "", fichaDe = null, editCtx = null;
 
 function irA(v, jug){
+  if (esExterno()){
+    if (v==="vivo" || v==="usuarios") v = "temporada";
+    if (v==="editar" && !(editCtx && puedeEditarJugador(editCtx.jid))) v = "ficha";
+  }
   vista = v;
   if (jug) fichaDe = jug;
   document.getElementById("vistaTemporada").hidden = (v!=="temporada");
@@ -743,8 +782,10 @@ function irA(v, jug){
   document.getElementById("vistaFicha").hidden = (v!=="ficha");
   document.getElementById("vistaEquipo").hidden = (v!=="equipo");
   document.getElementById("vistaEditar").hidden = (v!=="editar");
-  document.getElementById("vistaRol").hidden = (v!=="rol");
-  document.querySelector(".pestanas").hidden = (v==="rol");
+  document.getElementById("vistaUsuarios").hidden = (v!=="usuarios");
+  document.getElementById("vistaLogin").hidden = (v!=="login");
+  document.querySelector(".pestanas").hidden = (v==="login");
+  document.getElementById("tabVivo").hidden = esExterno();
   document.querySelector(".voz").style.display = (v==="vivo") ? "flex" : "none";
   document.getElementById("tabTemp").classList.toggle("activa", v!=="vivo");
   document.getElementById("tabVivo").classList.toggle("activa", v==="vivo");
@@ -810,9 +851,13 @@ function media(v, n){ return n ? (Math.round((v/n)*10)/10) : 0; }
 function pct(c, i){ const tot=c+i; return tot ? Math.round(c*100/tot)+"%" : "—"; }
 
 function pintarTemporada(){
-  if (soyColab()) return pintarColab();
+  if (esExterno()) return pintarExterno();
   document.getElementById("btnNuevo2").hidden = false;
   document.querySelector("#vistaTemporada .pie").hidden = false;
+  document.getElementById("btnAddJug").hidden = false;
+  document.getElementById("btnCSVTodo").hidden = false;
+  document.getElementById("btnUsuarios").hidden = false;
+  document.getElementById("btnReset").hidden = false;
   // filtros de equipo
   const ce = document.getElementById("filtrosEquipo");
   const eqs = equipos();
@@ -889,59 +934,94 @@ function pintarTemporada(){
   });
 }
 
-function pintarColab(){
+function pintarExterno(){
   document.getElementById("filtrosEquipo").innerHTML = "";
-  document.getElementById("filtros").innerHTML = "";
   document.getElementById("btnNuevo2").hidden = true;
-  document.querySelector("#vistaTemporada .pie").hidden = true;
+  document.querySelector("#vistaTemporada .pie").hidden = false;
+  document.getElementById("btnAddJug").hidden = true;
+  document.getElementById("btnCSVTodo").hidden = true;
+  document.getElementById("btnUsuarios").hidden = true;
+  document.getElementById("btnReset").hidden = true;
   const zona = document.getElementById("resumenTemporada");
-  const abiertos = D.partidos.filter(p=>p.abierto);
-  let h = '<h2 class="rot">Hola '+esc(yo().nombre)+'</h2>';
-  if (!abiertos.length){
-    h += '<div class="vacio">No hay ningún partido abierto. Cuando el administrador abra uno, aparecerá aquí solo.</div>';
-    zona.innerHTML = h; return;
+
+  if (!miPerfilOk()){
+    document.getElementById("filtros").innerHTML = "";
+    zona.innerHTML = '<h2 class="rot">Hola '+esc(sesion.user.email)+'</h2>'+
+      '<div class="vacio">Todavía no tenés un equipo asignado. Pedile al administrador del club que te dé acceso.</div>';
+    return;
   }
-  zona.innerHTML = h;
-  abiertos.forEach(p=>{
-    const cab = document.createElement("div");
-    cab.className = "rot";
-    cab.textContent = (p.equipo||"Equipo")+" vs "+(p.rival||"rival")+" · "+
-      new Date(p.fecha).toLocaleDateString("es-ES",{day:"numeric",month:"short"});
-    zona.appendChild(cab);
-    plantilla(p.equipo||"").forEach(j=>{
-      const dueno = (p.reclamos||{})[j.id];
-      const mio = dueno === yo().nombre;
-      const b = document.createElement("button");
-      b.className = "jug-tarjeta";
-      b.innerHTML = '<span class="ini">'+esc(j.dorsal||((j.nombre||"?").trim()[0]||"?"))+'</span>'+
-        '<span class="cuerpo"><b>'+esc(j.nombre)+'</b><span>'+
-        (mio ? "lo llevas tú" : (dueno ? "lo lleva "+esc(dueno) : "libre"))+'</span></span>'+
-        '<span class="abrir">'+(mio?"seguir":(dueno?"ocupado":"elegir"))+'</span>';
-      if (dueno && !mio){ b.style.opacity = ".45"; b.onclick = ()=>avisar("Ese jugador ya lo lleva "+dueno+"."); }
-      else b.onclick = ()=>reclamar(p, j);
-      zona.appendChild(b);
-    });
+
+  filtroEquipo = sesion.perfil.equipo;
+
+  const cont = document.getElementById("filtros");
+  const ls = ligas();
+  cont.innerHTML = "";
+  if (ls.length > 1 || (ls.length===1 && filtroLiga)){
+    const todas = document.createElement("button");
+    todas.textContent = "Todas"; todas.className = filtroLiga ? "" : "activa";
+    todas.onclick = ()=>{ filtroLiga=""; pintar(); };
+    cont.appendChild(todas);
+  }
+  ls.forEach(l=>{
+    const b = document.createElement("button");
+    b.textContent = l; b.className = (filtroLiga===l) ? "activa" : "";
+    b.onclick = ()=>{ filtroLiga = (filtroLiga===l ? "" : l); pintar(); };
+    cont.appendChild(b);
   });
+
+  zona.innerHTML = "";
+  const ae = agregadoEquipo(filtroLiga, sesion.perfil.equipo);
+  const bE = document.createElement("div");
+  bE.className = "jug-tarjeta";
+  bE.style.borderColor = "var(--balon)";
+  bE.innerHTML =
+    '<span class="ini" style="color:var(--balon)">🏀</span>'+
+    '<span class="cuerpo"><b>'+esc(sesion.perfil.equipo)+' <span class="etiqueta-liga">equipo</span></b><span class="num">'+
+      (ae.pj ? ae.pj+" partidos · "+media(puntos(ae.t),ae.pj)+" pts · "+pct(ae.t.t2c+ae.t.t3c, ae.t.t2f+ae.t.t3f)+" tiro de campo"
+             : "sin partidos todavía")+
+      (ae.pj ? '<br>'+ae.g+"G-"+ae.pd+"P" : "")+
+    '</span></span>'+
+    '<span class="pirbig"><b class="num">'+(ae.pj?media(puntos(ae.t),ae.pj):"—")+'</b><span>pts medios</span></span>';
+  bE.onclick = ()=>{ equipoDe = sesion.perfil.equipo; irA("equipo"); };
+  zona.appendChild(bE);
+
+  plantilla(sesion.perfil.equipo).forEach(j=>{
+    const a = agregado(j.id, filtroLiga);
+    const b = document.createElement("button");
+    b.className = "jug-tarjeta";
+    const pirMedio = media(pir(a.t), a.pj);
+    b.innerHTML =
+      '<span class="ini">'+esc(j.dorsal ? j.dorsal : ((j.nombre||"?").trim()[0]||"?"))+'</span>'+
+      '<span class="cuerpo"><b>'+esc(j.nombre)+(j.id===sesion.perfil.jugador?' <span class="etiqueta-liga">vos</span>':'')+'</b><span class="num">'+
+        (a.pj ? a.pj+" partidos · "+media(puntos(a.t),a.pj)+" pts · "+media(a.t.ro+a.t.rd,a.pj)+" reb · "+media(a.t.ast,a.pj)+" as"
+              : "sin partidos todavía")+
+      '</span></span>'+
+      '<span class="pirbig"><b class="num">'+(a.pj?pirMedio:"—")+'</b><span>PIR medio</span></span>';
+    b.onclick = ()=>irA("ficha", j.id);
+    zona.appendChild(b);
+  });
+
+  const permiso = document.createElement("div");
+  permiso.className = "resultado";
+  if (sesion.perfil.puedeEditar){
+    permiso.innerHTML = '<span class="gano">Podés corregir las estadísticas de tu jugador asignado.</span>';
+  } else if (sesion.perfil.pidioEditar){
+    permiso.innerHTML = '<span>Pediste permiso para editar — esperando que el administrador lo active.</span>';
+  } else {
+    permiso.innerHTML = '<span>Solo podés ver las estadísticas.</span>'+
+      '<button class="mini-btn" id="btnPedirEditar" style="margin-left:auto;flex:0 0 auto">Pedir permiso para editar</button>';
+  }
+  zona.appendChild(permiso);
+  const bp = document.getElementById("btnPedirEditar");
+  if (bp) bp.onclick = pedirPermisoEditar;
 }
-function reclamar(p, j){
-  const dueno = (p.reclamos||{})[j.id];
-  if (dueno && dueno !== yo().nombre){ avisar("Ese jugador ya lo lleva "+dueno+"."); return; }
-  if(!p.reclamos) p.reclamos = {};
-  p.reclamos[j.id] = yo().nombre;
-  D.actual = p.id; D.sel = j.id;
-  sucio(rp(p,"reclamos/"+j.id));
-  guardar();
-  irA("vivo");
-  // comprobación anti-choque: si otro lo pidió a la vez, gana quien quedó grabado
-  setTimeout(()=>{
-    const base = baseNube(); if(!base) return;
-    fetch(base+"/partidos/"+p.id+"/reclamos/"+j.id+".json").then(r=>r.json()).then(v=>{
-      if (v && v !== yo().nombre){
-        avisar("Ese jugador lo cogió "+v+" un instante antes. Elige otro.");
-        D.sel = null; irA("temporada");
-      }
-    }).catch(()=>{});
-  }, 1500);
+function pedirPermisoEditar(){
+  if (!sesion.user || !sesion.perfil) return;
+  escribirRuta("usuarios/"+sesion.user.uid+"/pidioEditar", true).then(()=>{
+    sesion.perfil.pidioEditar = true;
+    avisar("Listo, le avisamos al administrador.");
+    pintar();
+  }).catch(()=>avisar("No se pudo enviar la solicitud. Revisá tu conexión e intentá de nuevo."));
 }
 
 function pintarFicha(){
@@ -951,8 +1031,9 @@ function pintarFicha(){
   const a = agregado(j.id, filtroLiga);
   const t = a.t, n = a.pj;
 
+  const puedoEditar = puedeEditarJugador(j.id);
   let h = '<div class="cabecera"><h1>'+esc(j.dorsal?("#"+j.dorsal+" "):"")+esc(j.nombre)+'</h1>'+
-    '<div style="flex:1"></div><button class="mini-btn" id="btnEditJug" style="flex:0 0 auto">Editar</button></div>'+
+    '<div style="flex:1"></div>'+(sesion.esAdmin?'<button class="mini-btn" id="btnEditJug" style="flex:0 0 auto">Editar</button>':'')+'</div>'+
     (j.equipo ? '<div style="color:var(--tenue);font-size:13px;margin:-6px 4px 12px">'+esc(j.equipo)+'</div>' : '');
   h += '<div class="filtros" id="filtrosFicha"></div>';
   h += '<div class="tarjetas">'+
@@ -989,7 +1070,7 @@ function pintarFicha(){
         '<td class="num">'+(x.s.ro+x.s.rd)+'</td>'+
         '<td class="num">'+x.s.ast+'</td>'+
         '<td class="num destaca">'+pir(x.s)+'</td></tr>';
-      h += '<tr class="detalle" hidden><td colspan="8">'+detalle(x, pm)+'</td></tr>';
+      h += '<tr class="detalle" hidden><td colspan="8">'+detalle(x, pm, puedoEditar)+'</td></tr>';
     });
     h += '<tr class="media"><td>Media</td><td class="num">'+a.g+"G-"+a.pd+'P</td><td></td>'+
       '<td class="num">'+media(a.seg/60,n)+'</td><td class="num">'+media(puntos(t),n)+'</td>'+
@@ -1045,10 +1126,10 @@ function pintarFicha(){
     });
   }
 }
-function detalle(x, pm){
+function detalle(x, pm, puedoEditar){
   const s = x.s;
   const c = (v, et) => '<div><b class="num">'+v+'</b><span>'+et+'</span></div>';
-  return '<div class="dgrid">'+
+  let h = '<div class="dgrid">'+
     c(s.t2c+"/"+(s.t2c+s.t2f), "tiros de 2") +
     c(s.t3c+"/"+(s.t3c+s.t3f), "triples") +
     c(s.tlc+"/"+(s.tlc+s.tlf), "libres") +
@@ -1065,17 +1146,21 @@ function detalle(x, pm){
     c(Math.round(x.min)+"'", "minutos") +
     c(pm==null?"—":(pm>0?"+"+pm:pm), "+/−") +
     c(pir(s), "PIR") +
-  '</div>'+
-  '<div class="acciones-det">'+
-    '<button class="mini-btn" data-ed="'+x.p.id+'">Corregir este partido</button>'+
-    '<button class="mini-btn" data-abrir="'+x.p.id+'">Abrir en registro en vivo</button>'+
   '</div>';
+  if (puedoEditar){
+    h += '<div class="acciones-det">'+
+      '<button class="mini-btn" data-ed="'+x.p.id+'">Corregir este partido</button>'+
+      (sesion.esAdmin ? '<button class="mini-btn" data-abrir="'+x.p.id+'">Abrir en registro en vivo</button>' : '')+
+    '</div>';
+  }
+  return h;
 }
 function pintarEditar(){
   const zona = document.getElementById("editarCuerpo");
   const p = D.partidos.find(x=>x.id===editCtx.pid);
   const j = D.jugadores.find(x=>x.id===editCtx.jid);
   if(!p || !j){ zona.innerHTML = '<div class="vacio">Partido no encontrado.</div>'; return; }
+  if (!puedeEditarJugador(j.id)){ zona.innerHTML = '<div class="vacio">No tenés permiso para editar este partido.</div>'; return; }
   const s = statsDe(j.id, p);
   if(!p.pm) p.pm = {};
 
@@ -1087,12 +1172,12 @@ function pintarEditar(){
     '<div class="campos">'+
       '<label>Minutos jugados<input class="mini num" id="edMin" inputmode="numeric" value="'+Math.round(minutosDe(j.id,p)/60)+'"></label>'+
       '<label>+/−<input class="mini num" id="edPM" inputmode="text" value="'+(p.pm[j.id]==null?"":p.pm[j.id])+'" placeholder="ej: +8 o -5"></label>'+
-      '<label>Nuestros puntos<input class="mini num" id="edPF" inputmode="numeric" value="'+(p.pf==null?"":p.pf)+'"></label>'+
-      '<label>Puntos rival<input class="mini num" id="edPC" inputmode="numeric" value="'+(p.pc==null?"":p.pc)+'"></label>'+
+      (sesion.esAdmin ? '<label>Nuestros puntos<input class="mini num" id="edPF" inputmode="numeric" value="'+(p.pf==null?"":p.pf)+'"></label>' : '')+
+      (sesion.esAdmin ? '<label>Puntos rival<input class="mini num" id="edPC" inputmode="numeric" value="'+(p.pc==null?"":p.pc)+'"></label>' : '')+
     '</div>'+
     '<h2 class="rot">Estadísticas · '+puntos(s)+' pts, PIR '+pir(s)+'</h2>'+
     '<div id="pasos"></div>'+
-    '<div class="pie"><button id="edBorrar">Borrar este partido</button></div>';
+    (sesion.esAdmin ? '<div class="pie"><button id="edBorrar">Borrar este partido</button></div>' : '');
 
   const pasos = document.getElementById("pasos");
   const orden = [["t2c","Tiros de 2 convertidos"],["t2f","Tiros de 2 errados"],["t3c","Triples convertidos"],
@@ -1121,12 +1206,15 @@ function pintarEditar(){
     const n = parseInt(v,10); p.pm[j.id] = isNaN(n)?null:n; sucio(rp(p,"pm/"+j.id)); guardar();
   };
   [["edPF","pf"],["edPC","pc"]].forEach(([id,campo])=>{
-    document.getElementById(id).oninput = e=>{
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.oninput = e=>{
       const v = e.target.value.replace(/[^0-9]/g,""); e.target.value = v;
       p[campo] = v===""?null:Number(v); sucio(rp(p,"info")); guardar();
     };
   });
-  document.getElementById("edBorrar").onclick = ()=>{
+  const edBorrar = document.getElementById("edBorrar");
+  if (edBorrar) edBorrar.onclick = ()=>{
     if(!confirm("¿Borrar el partido contra "+(p.rival||"—")+"? Se pierden los datos de todos los jugadores en él.")) return;
     borrarRuta("partidos/"+p.id);
     D.partidos = D.partidos.filter(x=>x.id!==p.id);
@@ -1231,6 +1319,97 @@ function detalleEquipo(x){
   '</div>';
 }
 
+/* ===================== usuarios (admin) ===================== */
+function pintarUsuarios(){
+  const zona = document.getElementById("usuariosCuerpo");
+  const lista = Object.keys(D.usuarios||{});
+  let h = '<div class="cabecera"><h1>Usuarios</h1></div>';
+  h += '<button class="cta" id="btnCrearUsuario">+ Crear usuario</button>';
+  if (!lista.length){
+    h += '<div class="vacio">Todavía no creaste ningún usuario externo.</div>';
+  } else {
+    h += '<h2 class="rot">Usuarios externos</h2>';
+  }
+  zona.innerHTML = h;
+
+  lista.forEach(uid=>{
+    const u = D.usuarios[uid];
+    const j = D.jugadores.find(x=>x.id===u.jugador);
+    const f = document.createElement("div");
+    f.className = "jug-tarjeta";
+    f.innerHTML =
+      '<span class="ini">'+esc(((u.nombre||u.email||"?").trim()[0]||"?"))+'</span>'+
+      '<span class="cuerpo"><b>'+esc(u.nombre||u.email)+'</b><span>'+esc(u.email)+
+        '<br>'+esc(u.equipo||"sin equipo")+(j?' · '+esc(j.nombre):'')+
+        (u.pidioEditar && !u.puedeEditar ? '<br><span style="color:var(--balon)">pidió permiso para editar</span>' : '')+
+      '</span></span>';
+    const btnTog = document.createElement("button");
+    btnTog.className = "mini-btn"; btnTog.style.flex = "0 0 auto";
+    btnTog.textContent = u.puedeEditar ? "Puede editar ✓" : "No puede editar";
+    if (u.puedeEditar) btnTog.style.color = "var(--bien)";
+    btnTog.onclick = ()=>{
+      Promise.all([
+        escribirRuta("usuarios/"+uid+"/puedeEditar", !u.puedeEditar),
+        escribirRuta("usuarios/"+uid+"/pidioEditar", false)
+      ]).catch(()=>avisar("No se pudo guardar el cambio. Revisá tu conexión e intentá de nuevo."));
+    };
+    f.appendChild(btnTog);
+    const btnDel = document.createElement("button");
+    btnDel.className = "x"; btnDel.textContent = "×"; btnDel.title = "Quitar acceso";
+    btnDel.onclick = ()=>{
+      if(!confirm("¿Quitarle el acceso a "+(u.nombre||u.email)+"? Su cuenta de acceso sigue existiendo, pero no va a poder ver ni editar nada hasta que le vuelvas a asignar equipo.")) return;
+      escribirRuta("usuarios/"+uid, null).catch(()=>avisar("No se pudo quitar el acceso. Revisá tu conexión e intentá de nuevo."));
+    };
+    f.appendChild(btnDel);
+    zona.appendChild(f);
+  });
+
+  document.getElementById("btnCrearUsuario").onclick = crearUsuarioExterno;
+}
+async function crearUsuarioExterno(){
+  const eqs = equipos();
+  if (!eqs.length){ avisar("Primero necesitás al menos un equipo con jugadores."); return; }
+  const email = (prompt("Email de la persona:")||"").trim();
+  if (!email) return;
+  const pass = (prompt("Contraseña provisoria (mínimo 6 caracteres; se la pasás vos por fuera de la app):")||"").trim();
+  if (!pass || pass.length<6){ avisar("La contraseña tiene que tener al menos 6 caracteres."); return; }
+  const nombre = (prompt("Nombre para identificarlo/a:", "")||"").trim();
+  const equipo = (prompt("Equipo\n\nYa tenés: "+eqs.join(", "), eqs[0])||"").trim();
+  if (!eqs.some(e=>e.toLowerCase()===equipo.toLowerCase())){ avisar("Ese equipo no existe. Escribilo exactamente igual a como aparece."); return; }
+  const roster = plantilla(eqs.find(e=>e.toLowerCase()===equipo.toLowerCase()));
+  let jugadorId = "";
+  if (roster.length){
+    const elegido = (prompt("Jugador asignado (opcional, para que pueda cargar sus propias estadísticas)\n\n"+roster.map(j=>j.nombre).join(", "), "")||"").trim();
+    if (elegido){
+      const j = roster.find(x=>x.nombre.toLowerCase()===elegido.toLowerCase());
+      if (!j){ avisar("No encontré ese jugador en el equipo."); return; }
+      jugadorId = j.id;
+    }
+  }
+
+  avisar("Creando usuario…");
+  const secApp = firebase.initializeApp(FIREBASE_CONFIG, "sec-"+Date.now());
+  try{
+    const cred = await secApp.auth().createUserWithEmailAndPassword(email, pass);
+    const uid = cred.user.uid;
+    await secApp.auth().signOut();
+    await escribirRuta("usuarios/"+uid, {
+      email, nombre: nombre||email, equipo, jugador: jugadorId,
+      puedeEditar:false, pidioEditar:false, creado: Date.now()
+    });
+    avisar("Usuario creado. Pasale el email y la contraseña por fuera de la app.");
+  }catch(e){
+    const msgs = {
+      "auth/email-already-in-use": "Ese email ya tiene una cuenta creada.",
+      "auth/invalid-email": "El email no es válido.",
+      "auth/weak-password": "La contraseña es muy débil."
+    };
+    avisar(msgs[e.code] || "No se pudo crear el usuario: "+e.message);
+  }finally{
+    try{ await secApp.delete(); }catch(e2){}
+  }
+}
+
 function tarjeta(v, et, destaca){
   return '<div class="tarjeta'+(destaca?" pir":"")+'"><b class="num">'+v+'</b><span>'+et+'</span></div>';
 }
@@ -1255,7 +1434,8 @@ function spark(vals, etiqueta){
 
 /* ===================== pintar ===================== */
 function pintar(){
-  if (vista==="rol") return;
+  if (vista==="login") return;
+  if (vista==="usuarios"){ pintarUsuarios(); return; }
   if (vista==="temporada"){ pintarTemporada(); return; }
   if (vista==="ficha"){ pintarFicha(); return; }
   if (vista==="equipo"){ pintarEquipo(); return; }
@@ -1274,19 +1454,6 @@ function pintar(){
   document.getElementById("marcRiv").textContent = puntosRival(p);
   document.getElementById("nomRival").textContent = p.rival ? p.rival : "rival";
 
-  const colab = soyColab();
-  document.querySelector(".rivBtns").style.display = colab ? "none" : "flex";
-  document.getElementById("rival").readOnly = colab;
-  document.getElementById("liga").readOnly = colab;
-  document.getElementById("barraColab").style.display = colab ? "none" : "flex";
-  document.getElementById("pmZona").parentElement.style.display = colab ? "none" : "block";
-  const txa = document.getElementById("txtAbierto"), bta = document.getElementById("btnAbrir");
-  if (!colab){
-    txa.textContent = p.abierto ? "Abierto a colaboradores" : "Cerrado a colaboradores";
-    txa.className = p.abierto ? "gano" : "";
-    bta.textContent = p.abierto ? "Cerrar" : "Abrir";
-  }
-  pintarReclamos(p, colab);
 
   pintarFichas("tiraJugadores");
 
@@ -1334,31 +1501,12 @@ function pintarPM(p){
   });
 }
 
-function pintarReclamos(p, colab){
-  const cont = document.getElementById("listaReclamos");
-  const rs = Object.keys(p.reclamos||{});
-  if (colab || !rs.length){ cont.innerHTML = ""; return; }
-  let h = '<div class="rot">Registrando ahora</div>';
-  cont.innerHTML = h;
-  rs.forEach(jid=>{
-    const f = document.createElement("div");
-    f.className = "fila";
-    f.innerHTML = '<span class="q"><b>'+esc(nombreDe(jid,true))+'</b> · '+esc(p.reclamos[jid])+'</span>';
-    const x = document.createElement("button");
-    x.className = "x"; x.textContent = "×"; x.title = "Liberar";
-    x.onclick = ()=>{ delete p.reclamos[jid]; borrarRuta(rp(p,"reclamos/"+jid)); guardar(); pintar(); };
-    f.appendChild(x);
-    cont.appendChild(f);
-  });
-}
-
 function pintarFichas(idCont){
   const cont = document.getElementById(idCont);
   if(!cont) return;
   const p = partidoActual();
   cont.innerHTML = "";
   let lista = plantilla(p.equipo||"");
-  if (soyColab()) lista = lista.filter(j=> j.id === D.sel);
   if(!lista.length){
     const v = document.createElement("div");
     v.className = "vacio";
@@ -1374,7 +1522,7 @@ function pintarFichas(idCont){
     b.onclick = ()=>{ D.sel = j.id; pintar(); guardar(); };
     cont.appendChild(b);
   });
-  if (!soyColab()){
+  {
     const add = document.createElement("button");
     add.className = "ficha ficha-add"; add.textContent = "+";
     add.onclick = anadirJugador;
@@ -1473,17 +1621,12 @@ document.getElementById("mic").onclick = alternarVoz;
 document.getElementById("rival").oninput = e=>{ const p=partidoActual(); p.rival = e.target.value; sucio(rp(p,"info")); guardar(); };
 document.getElementById("liga").oninput = e=>{ const p=partidoActual(); p.liga = e.target.value; sucio(rp(p,"info")); guardar(); };
 document.getElementById("tabTemp").onclick = ()=>irA((vista==="ficha"||vista==="equipo")?vista:"temporada");
-document.getElementById("nubeEstado").ondblclick = ()=>pedirRol();
 document.getElementById("tabVivo").onclick = ()=>irA("vivo");
 document.getElementById("btnVolver").onclick = ()=>irA("temporada");
 document.getElementById("btnVolverEquipo").onclick = ()=>irA("temporada");
 document.getElementById("btnVolverEd").onclick = ()=>irA("ficha");
-document.getElementById("btnAbrir").onclick = ()=>{
-  const p = partidoActual();
-  p.abierto = !p.abierto;
-  sucio(rp(p,"info"));
-  guardar(); pintar();
-};
+document.getElementById("btnUsuarios").onclick = ()=>irA("usuarios");
+document.getElementById("btnVolverUsuarios").onclick = ()=>irA("temporada");
 document.getElementById("btnReset").onclick = ()=>{
   const ls = ligas();
   let msg = "Escribe qué quieres borrar:\n\n  todo  → todos los partidos\n  jugadores → partidos y jugadores";
@@ -1622,6 +1765,15 @@ function baseNube(){
   const c = cfgNube();
   return (c.url && c.sala) ? c.url+"/salas/"+encodeURIComponent(c.sala) : null;
 }
+/* --- escritura puntual autenticada (usuarios, permisos) --- */
+function escribirRuta(ruta, valor){
+  const base = baseNube();
+  if (!base || !sesion.idToken) return Promise.resolve();
+  const opts = (valor===null)
+    ? { method:"DELETE" }
+    : { method:"PUT", body:JSON.stringify(valor) };
+  return fetch(base+"/"+ruta+".json?auth="+sesion.idToken, opts);
+}
 
 /* --- aplanado: cada rama de la nube por separado --- */
 function aplanar(d){
@@ -1630,12 +1782,11 @@ function aplanar(d){
   d.partidos.forEach(p=>{
     m["partidos/"+p.id+"/info"] = {
       fecha:p.fecha, rival:p.rival||"", liga:p.liga||"", equipo:p.equipo||"",
-      pf:(p.pf==null?"":p.pf), pc:(p.pc==null?"":p.pc), abierto:!!p.abierto
+      pf:(p.pf==null?"":p.pf), pc:(p.pc==null?"":p.pc)
     };
     Object.keys(p.stats||{}).forEach(k=>{ m["partidos/"+p.id+"/stats/"+k] = p.stats[k]; });
     Object.keys(p.seg_j||{}).forEach(k=>{ m["partidos/"+p.id+"/seg_j/"+k] = Math.round(p.seg_j[k]); });
     Object.keys(p.pm||{}).forEach(k=>{ if(p.pm[k]!=null) m["partidos/"+p.id+"/pm/"+k] = p.pm[k]; });
-    Object.keys(p.reclamos||{}).forEach(k=>{ m["partidos/"+p.id+"/reclamos/"+k] = p.reclamos[k]; });
     (p.log||[]).forEach(e=>{
       const c = Object.assign({}, e); delete c.id;
       m["partidos/"+p.id+"/log/"+e.id] = c;
@@ -1645,7 +1796,7 @@ function aplanar(d){
 }
 /* --- reconstruir D desde la nube --- */
 function deRemoto(raw){
-  const d = { jugadores:[], partidos:[], actual:D.actual, sel:D.sel };  // se reajusta en aplicarRemoto
+  const d = { jugadores:[], partidos:[], usuarios: raw.usuarios||{}, actual:D.actual, sel:D.sel };  // se reajusta en aplicarRemoto
   Object.keys(raw.jugadores||{}).forEach(id=>{
     d.jugadores.push(Object.assign({ id }, raw.jugadores[id]));
   });
@@ -1654,8 +1805,8 @@ function deRemoto(raw){
     const p = { id:pid, fecha:inf.fecha, rival:inf.rival||"", liga:inf.liga||"", equipo:inf.equipo||"",
       pf:(inf.pf===""||inf.pf==null)?null:Number(inf.pf),
       pc:(inf.pc===""||inf.pc==null)?null:Number(inf.pc),
-      abierto:!!inf.abierto, stats:r.stats||{}, seg_j:r.seg_j||{},
-      pm:r.pm||{}, reclamos:r.reclamos||{}, log:[] };
+      stats:r.stats||{}, seg_j:r.seg_j||{},
+      pm:r.pm||{}, log:[] };
     Object.keys(r.log||{}).forEach(eid=>{ p.log.push(Object.assign({ id:eid }, r.log[eid])); });
     p.log.sort((a,b)=>(b.ts||0)-(a.ts||0));
     d.partidos.push(p);
@@ -1663,31 +1814,32 @@ function deRemoto(raw){
   d.partidos.sort((a,b)=> new Date(b.fecha) - new Date(a.fecha));
   return sanear(d);
 }
-/* --- qué le dejamos escribir a un colaborador --- */
+/* --- qué le dejamos escribir a un usuario externo --- */
 function puedeEscribir(ruta, valor){
-  if (!soyColab()) return true;
-  const mio = D.sel;
+  if (sesion.esAdmin) return true;
+  if (!sesion.perfil || !sesion.perfil.puedeEditar) return false;
+  const mio = sesion.perfil.jugador;
   if (!mio) return false;
-  if (ruta.indexOf("/stats/")>0 || ruta.indexOf("/seg_j/")>0)
+  if (ruta.indexOf("/stats/")>0 || ruta.indexOf("/seg_j/")>0 || ruta.indexOf("/pm/")>0)
     return ruta.slice(ruta.lastIndexOf("/")+1) === mio;
-  if (ruta.indexOf("/reclamos/")>0) return ruta.slice(ruta.lastIndexOf("/")+1) === mio;
-  if (ruta.indexOf("/log/")>0) return !!valor && valor.por === yo().nombre;
+  if (ruta.indexOf("/log/")>0) return !!valor && valor.jug === mio;
   return false;
 }
 function subirNube(){
-  const base = baseNube(); if(!base) return;
+  const base = baseNube(); if(!base || !sesion.idToken) return;
   clearTimeout(tSubir);
   tSubir = setTimeout(()=>{
     tSubir = null;
+    const tok = sesion.idToken;
     const ahora = aplanar(D);
     const tareas = [];
     sucias.forEach(ruta=>{
       if (!(ruta in ahora)) return;
       if (!puedeEscribir(ruta, ahora[ruta])) return;
-      tareas.push(fetch(base+"/"+ruta+".json", { method:"PUT", body:JSON.stringify(ahora[ruta]) }));
+      tareas.push(fetch(base+"/"+ruta+".json?auth="+tok, { method:"PUT", body:JSON.stringify(ahora[ruta]) }));
     });
     porBorrar.forEach(ruta=>{
-      tareas.push(fetch(base+"/"+ruta+".json", { method:"DELETE" }));
+      tareas.push(fetch(base+"/"+ruta+".json?auth="+tok, { method:"DELETE" }));
     });
     sucias.clear(); porBorrar.clear();
     if (!tareas.length) return;
@@ -1698,11 +1850,15 @@ function subirNube(){
         ponerEstado(rs.every(r=>r.ok) ? "sincronizada" : "error");
         setTimeout(()=>{
           escribiendoHasta = 0;
-          fetch(base+".json").then(r=>r.json()).then(aplicarRemoto).catch(()=>{});
+          fetch(base+".json?auth="+sesion.idToken).then(r=>r.json()).then(aplicarRemoto).catch(()=>{});
         }, 600);
       })
       .catch(()=>ponerEstado("sin conexión"));
   }, 700);
+}
+function actualizarPerfil(){
+  if (!sesion.user || sesion.esAdmin) return;
+  sesion.perfil = D.usuarios[sesion.user.uid] || null;
 }
 function aplicarRemoto(raw){
   if (!raw || typeof raw !== "object") return;
@@ -1720,7 +1876,8 @@ function aplicarRemoto(raw){
   D = nuevo;
   if (D.partidos.some(p=>p.id===actualAntes)) D.actual = actualAntes;
   if (D.jugadores.some(j=>j.id===selAntes)) D.sel = selAntes;
-  if (!partidoActual() && !soyColab()) nuevoPartido("");
+  if (!partidoActual() && sesion.esAdmin) nuevoPartido("");
+  actualizarPerfil();
   ultimoPlano = aplanar(D);
   Store.set("planilla:v1", JSON.stringify(D));
   ponerEstado("sincronizada");
@@ -1731,15 +1888,15 @@ function migrarFormato(viejo){
   D = sanear(viejo);
   ultimoPlano = {};
   subirNube();
-  setTimeout(()=>{ fetch(base+"/datos.json",{method:"DELETE"}); fetch(base+"/ts.json",{method:"DELETE"}); }, 2500);
+  setTimeout(()=>{ fetch(base+"/datos.json?auth="+sesion.idToken,{method:"DELETE"}); fetch(base+"/ts.json?auth="+sesion.idToken,{method:"DELETE"}); }, 2500);
   pintar();
 }
 function escucharNube(){
   const base = baseNube();
-  if(!base){ ponerEstado("apagada"); return; }
+  if(!base || !sesion.idToken){ ponerEstado("apagada"); return; }
   if(!window.EventSource){ ponerEstado("sin tiempo real"); return; }
   try{ canal && canal.close(); }catch(e){}
-  const ref = base+".json";
+  const ref = base+".json?auth="+sesion.idToken;
   canal = new EventSource(ref);
   const recargar = ()=> fetch(ref).then(r=>r.json()).then(aplicarRemoto).catch(()=>{});
   canal.addEventListener("put", e=>{
@@ -1770,29 +1927,75 @@ function configurarNube(){
   escucharNube();
 }
 
-/* ===================== identidad ===================== */
-function pedirRol(){
-  irA("rol");
-  const guarda = rol=>{
-    const n = (document.getElementById("rolNombre").value||"").trim();
-    if(!n){ avisar("Escribe tu nombre para continuar."); return; }
-    seryo(rol, n);
-    if (rol==="colab"){ D.sel = null; D.actual = null; }
-    irA("temporada");
-  };
-  document.getElementById("rolAdmin").onclick = ()=>guarda("admin");
-  document.getElementById("rolColab").onclick = ()=>guarda("colab");
+/* ===================== identidad (Firebase Authentication) ===================== */
+function pintarLoginAviso(msg){
+  const a = document.getElementById("loginAviso");
+  if(!a) return;
+  if(!msg){ a.classList.remove("ver"); a.textContent=""; return; }
+  a.textContent = msg; a.classList.add("ver");
 }
-function yo(){
-  try{ return JSON.parse(localStorage.getItem("planilla:yo") || "null") || { rol:"", nombre:"" }; }
-  catch(e){ return { rol:"", nombre:"" }; }
+function iniciarSesion(){
+  const email = (document.getElementById("loginEmail").value||"").trim();
+  const pass = document.getElementById("loginPass").value||"";
+  if(!email || !pass){ pintarLoginAviso("Completá email y contraseña."); return; }
+  pintarLoginAviso("");
+  fbAuth.signInWithEmailAndPassword(email, pass).catch(e=>{
+    const msgs = {
+      "auth/invalid-email":"El email no es válido.",
+      "auth/user-not-found":"No existe una cuenta con ese email.",
+      "auth/wrong-password":"Contraseña incorrecta.",
+      "auth/invalid-credential":"Email o contraseña incorrectos.",
+      "auth/too-many-requests":"Demasiados intentos. Probá de nuevo en un rato."
+    };
+    pintarLoginAviso(msgs[e.code] || "No se pudo iniciar sesión.");
+  });
 }
-function seryo(rol, nombre){
-  try{ localStorage.setItem("planilla:yo", JSON.stringify({ rol, nombre })); }catch(e){}
+function cerrarSesion(){
+  try{ canal && canal.close(); }catch(e){}
+  fbAuth.signOut();
 }
-function soyColab(){ return yo().rol === "colab"; }
 
-/* ===================== persistencia y arranque ===================== */
+let arrancoLocal = false;
+async function arrancarDatos(){
+  if (!arrancoLocal){
+    arrancoLocal = true;
+    const raw = await Store.get("planilla:v1");
+    if (raw){
+      try{ D = sanear(JSON.parse(raw)); }
+      catch(e){ D = { jugadores:[], partidos:[], usuarios:{}, actual:null, sel:null }; }
+    }
+  }
+  actualizarPerfil();
+  if (sesion.esAdmin){
+    if (!partidoActual()) nuevoPartido("");
+    if (!D.sel && D.jugadores[0]) D.sel = D.jugadores[0].id;
+  }
+  ultimoPlano = aplanar(D);
+  irA("temporada");
+  escucharNube();
+}
+
+fbAuth.onAuthStateChanged(async user=>{
+  if (!user){
+    sesion = { user:null, esAdmin:false, perfil:null, idToken:null };
+    try{ canal && canal.close(); }catch(e){}
+    document.getElementById("loginEmail").value = "";
+    document.getElementById("loginPass").value = "";
+    irA("login");
+    return;
+  }
+  sesion.user = user;
+  sesion.esAdmin = ADMIN_EMAILS.includes(user.email);
+  try{ sesion.idToken = await user.getIdToken(); }catch(e){}
+  arrancarDatos();
+});
+fbAuth.onIdTokenChanged(async user=>{
+  if (!user || user!==sesion.user) return;
+  try{ sesion.idToken = await user.getIdToken(); }catch(e){ return; }
+  escucharNube();
+});
+
+/* ===================== persistencia ===================== */
 let tGuardar;
 function guardar(){
   clearTimeout(tGuardar);
@@ -1800,21 +2003,14 @@ function guardar(){
   subirNube();
 }
 
-(async function arrancar(){
-  const raw = await Store.get("planilla:v1");
-  if (raw){
-    try{
-      D = sanear(JSON.parse(raw));
-    }catch(e){ D = { jugadores:[], partidos:[], actual:null, sel:null }; }
-  }
-  if (!partidoActual() && !soyColab()) nuevoPartido("");
-  if (!D.sel && D.jugadores[0] && !soyColab()) D.sel = D.jugadores[0].id;
-  ultimoPlano = aplanar(D);
-  if (!yo().rol) pedirRol(); else irA("temporada");
-  escucharNube();
+(function iniciar(){
+  document.getElementById("btnLogin").onclick = iniciarSesion;
+  document.getElementById("loginPass").addEventListener("keydown", e=>{ if(e.key==="Enter") iniciarSesion(); });
+  document.getElementById("loginEmail").addEventListener("keydown", e=>{ if(e.key==="Enter") iniciarSesion(); });
+  document.getElementById("btnLogout").onclick = cerrarSesion;
   document.getElementById("nubeEstado").onclick = configurarNube;
   document.addEventListener("visibilitychange", ()=>{
-    if (!document.hidden && baseNube() && (!canal || canal.readyState===2)) escucharNube();
+    if (!document.hidden && baseNube() && sesion.idToken && (!canal || canal.readyState===2)) escucharNube();
   });
 })();
 </script>
