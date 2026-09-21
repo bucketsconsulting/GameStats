@@ -1354,17 +1354,31 @@ function pintarUsuarios(){
     btnTog.textContent = u.puedeEditar ? "Puede editar ✓" : "No puede editar";
     if (u.puedeEditar) btnTog.style.color = "var(--bien)";
     btnTog.onclick = ()=>{
+      const antes = { puedeEditar:u.puedeEditar, pidioEditar:u.pidioEditar };
+      u.puedeEditar = !u.puedeEditar;
+      u.pidioEditar = false;
+      pintar();
       Promise.all([
-        escribirRuta("usuarios/"+uid+"/puedeEditar", !u.puedeEditar),
+        escribirRuta("usuarios/"+uid+"/puedeEditar", u.puedeEditar),
         escribirRuta("usuarios/"+uid+"/pidioEditar", false)
-      ]).catch(()=>avisar("No se pudo guardar el cambio. Revisá tu conexión e intentá de nuevo."));
+      ]).catch(()=>{
+        Object.assign(u, antes);
+        pintar();
+        avisar("No se pudo guardar el cambio. Revisá tu conexión e intentá de nuevo.");
+      });
     };
     f.appendChild(btnTog);
     const btnDel = document.createElement("button");
     btnDel.className = "x"; btnDel.textContent = "×"; btnDel.title = "Quitar acceso";
     btnDel.onclick = ()=>{
       if(!confirm("¿Quitarle el acceso a "+nombreVer+"? Su cuenta de acceso sigue existiendo, pero no va a poder ver ni editar nada hasta que le vuelvas a asignar equipo.")) return;
-      escribirRuta("usuarios/"+uid, null).catch(()=>avisar("No se pudo quitar el acceso. Revisá tu conexión e intentá de nuevo."));
+      delete D.usuarios[uid];
+      pintar();
+      escribirRuta("usuarios/"+uid, null).catch(()=>{
+        D.usuarios[uid] = u;
+        pintar();
+        avisar("No se pudo quitar el acceso. Revisá tu conexión e intentá de nuevo.");
+      });
     };
     f.appendChild(btnDel);
     zona.appendChild(f);
@@ -1451,12 +1465,21 @@ function editarUsuarioExterno(uid, u){
       }
     }
   }
+  const antes = { nombre:u.nombre, equipo:u.equipo, jugador:u.jugador };
+  u.nombre = nombre || u.email || "";
+  u.equipo = equipo;
+  u.jugador = jugadorId;
+  pintar();
   Promise.all([
-    escribirRuta("usuarios/"+uid+"/nombre", nombre || u.email || ""),
-    escribirRuta("usuarios/"+uid+"/equipo", equipo),
-    escribirRuta("usuarios/"+uid+"/jugador", jugadorId)
+    escribirRuta("usuarios/"+uid+"/nombre", u.nombre),
+    escribirRuta("usuarios/"+uid+"/equipo", u.equipo),
+    escribirRuta("usuarios/"+uid+"/jugador", u.jugador)
   ]).then(()=>avisar("Usuario actualizado."))
-    .catch(()=>avisar("No se pudo guardar el cambio. Revisá tu conexión e intentá de nuevo."));
+    .catch(()=>{
+      Object.assign(u, antes);
+      pintar();
+      avisar("No se pudo guardar el cambio. Revisá tu conexión e intentá de nuevo.");
+    });
 }
 
 function tarjeta(v, et, destaca){
