@@ -1335,14 +1335,20 @@ function pintarUsuarios(){
   lista.forEach(uid=>{
     const u = D.usuarios[uid];
     const j = D.jugadores.find(x=>x.id===u.jugador);
+    const nombreVer = u.nombre || u.email || "(sin datos — borralo y creá el usuario de nuevo)";
     const f = document.createElement("div");
     f.className = "jug-tarjeta";
     f.innerHTML =
-      '<span class="ini">'+esc(((u.nombre||u.email||"?").trim()[0]||"?"))+'</span>'+
-      '<span class="cuerpo"><b>'+esc(u.nombre||u.email)+'</b><span>'+esc(u.email)+
+      '<span class="ini">'+esc((nombreVer.trim()[0]||"?"))+'</span>'+
+      '<span class="cuerpo"><b>'+esc(nombreVer)+'</b><span>'+esc(u.email||"—")+
         '<br>'+esc(u.equipo||"sin equipo")+(j?' · '+esc(j.nombre):'')+
         (u.pidioEditar && !u.puedeEditar ? '<br><span style="color:var(--balon)">pidió permiso para editar</span>' : '')+
       '</span></span>';
+    const btnEd = document.createElement("button");
+    btnEd.className = "mini-btn"; btnEd.style.flex = "0 0 auto";
+    btnEd.textContent = "Editar";
+    btnEd.onclick = ()=>editarUsuarioExterno(uid, u);
+    f.appendChild(btnEd);
     const btnTog = document.createElement("button");
     btnTog.className = "mini-btn"; btnTog.style.flex = "0 0 auto";
     btnTog.textContent = u.puedeEditar ? "Puede editar ✓" : "No puede editar";
@@ -1357,7 +1363,7 @@ function pintarUsuarios(){
     const btnDel = document.createElement("button");
     btnDel.className = "x"; btnDel.textContent = "×"; btnDel.title = "Quitar acceso";
     btnDel.onclick = ()=>{
-      if(!confirm("¿Quitarle el acceso a "+(u.nombre||u.email)+"? Su cuenta de acceso sigue existiendo, pero no va a poder ver ni editar nada hasta que le vuelvas a asignar equipo.")) return;
+      if(!confirm("¿Quitarle el acceso a "+nombreVer+"? Su cuenta de acceso sigue existiendo, pero no va a poder ver ni editar nada hasta que le vuelvas a asignar equipo.")) return;
       escribirRuta("usuarios/"+uid, null).catch(()=>avisar("No se pudo quitar el acceso. Revisá tu conexión e intentá de nuevo."));
     };
     f.appendChild(btnDel);
@@ -1369,17 +1375,27 @@ function pintarUsuarios(){
 async function crearUsuarioExterno(){
   const eqs = equipos();
   if (!eqs.length){ avisar("Primero necesitás al menos un equipo con jugadores."); return; }
-  const email = (prompt("Email de la persona:")||"").trim();
+  const emailR = prompt("Email de la persona:");
+  if (emailR===null) return;
+  const email = emailR.trim();
   if (!email) return;
-  const pass = (prompt("Contraseña provisoria (mínimo 6 caracteres; se la pasás vos por fuera de la app):")||"").trim();
+  const passR = prompt("Contraseña provisoria (mínimo 6 caracteres; se la pasás vos por fuera de la app):");
+  if (passR===null) return;
+  const pass = passR.trim();
   if (!pass || pass.length<6){ avisar("La contraseña tiene que tener al menos 6 caracteres."); return; }
-  const nombre = (prompt("Nombre para identificarlo/a:", "")||"").trim();
-  const equipo = (prompt("Equipo\n\nYa tenés: "+eqs.join(", "), eqs[0])||"").trim();
+  const nombreR = prompt("Nombre para identificarlo/a:", "");
+  if (nombreR===null) return;
+  const nombre = nombreR.trim();
+  const equipoR = prompt("Equipo\n\nYa tenés: "+eqs.join(", "), eqs[0]);
+  if (equipoR===null) return;
+  const equipo = equipoR.trim();
   if (!eqs.some(e=>e.toLowerCase()===equipo.toLowerCase())){ avisar("Ese equipo no existe. Escribilo exactamente igual a como aparece."); return; }
   const roster = plantilla(eqs.find(e=>e.toLowerCase()===equipo.toLowerCase()));
   let jugadorId = "";
   if (roster.length){
-    const elegido = (prompt("Jugador asignado (opcional, para que pueda cargar sus propias estadísticas)\n\n"+roster.map(j=>j.nombre).join(", "), "")||"").trim();
+    const elegidoR = prompt("Jugador asignado (opcional, para que pueda cargar sus propias estadísticas)\n\n"+roster.map(j=>j.nombre).join(", "), "");
+    if (elegidoR===null) return;
+    const elegido = elegidoR.trim();
     if (elegido){
       const j = roster.find(x=>x.nombre.toLowerCase()===elegido.toLowerCase());
       if (!j){ avisar("No encontré ese jugador en el equipo."); return; }
@@ -1408,6 +1424,39 @@ async function crearUsuarioExterno(){
   }finally{
     try{ await secApp.delete(); }catch(e2){}
   }
+}
+function editarUsuarioExterno(uid, u){
+  const eqs = equipos();
+  const nombreR = prompt("Nombre", u.nombre||"");
+  if (nombreR===null) return;
+  const nombre = nombreR.trim();
+  const equipoR = prompt("Equipo (dejalo vacío para sacarle el acceso sin borrar la cuenta)"+(eqs.length?"\n\nYa tenés: "+eqs.join(", "):""), u.equipo||"");
+  if (equipoR===null) return;
+  const equipo = equipoR.trim();
+  if (equipo && !eqs.some(e=>e.toLowerCase()===equipo.toLowerCase())){
+    avisar("Ese equipo no existe. Escribilo exactamente igual a como aparece."); return;
+  }
+  let jugadorId = "";
+  if (equipo){
+    const roster = plantilla(eqs.find(e=>e.toLowerCase()===equipo.toLowerCase()));
+    if (roster.length){
+      const jActual = D.jugadores.find(x=>x.id===u.jugador);
+      const elegidoR = prompt("Jugador asignado (vacío = ninguno)\n\n"+roster.map(j=>j.nombre).join(", "), (jActual&&jActual.equipo===equipo)?jActual.nombre:"");
+      if (elegidoR===null) return;
+      const elegido = elegidoR.trim();
+      if (elegido){
+        const j = roster.find(x=>x.nombre.toLowerCase()===elegido.toLowerCase());
+        if (!j){ avisar("No encontré ese jugador en el equipo."); return; }
+        jugadorId = j.id;
+      }
+    }
+  }
+  Promise.all([
+    escribirRuta("usuarios/"+uid+"/nombre", nombre || u.email || ""),
+    escribirRuta("usuarios/"+uid+"/equipo", equipo),
+    escribirRuta("usuarios/"+uid+"/jugador", jugadorId)
+  ]).then(()=>avisar("Usuario actualizado."))
+    .catch(()=>avisar("No se pudo guardar el cambio. Revisá tu conexión e intentá de nuevo."));
 }
 
 function tarjeta(v, et, destaca){
@@ -1768,11 +1817,14 @@ function baseNube(){
 /* --- escritura puntual autenticada (usuarios, permisos) --- */
 function escribirRuta(ruta, valor){
   const base = baseNube();
-  if (!base || !sesion.idToken) return Promise.resolve();
+  if (!base || !sesion.idToken) return Promise.reject(new Error("sin conexión a la nube"));
   const opts = (valor===null)
     ? { method:"DELETE" }
     : { method:"PUT", body:JSON.stringify(valor) };
-  return fetch(base+"/"+ruta+".json?auth="+sesion.idToken, opts);
+  return fetch(base+"/"+ruta+".json?auth="+sesion.idToken, opts).then(r=>{
+    if (!r.ok) throw new Error("HTTP "+r.status);
+    return r;
+  });
 }
 
 /* --- aplanado: cada rama de la nube por separado --- */
